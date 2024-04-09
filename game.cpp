@@ -1,6 +1,7 @@
+#include <iostream>
 #include <cmath>
-#include "src/include/SDL2/SDL.h"
-//#include "src/include/SDL2/SDL_ttf.h"
+#include <SDL.h>
+#include <SDL_ttf.h>
 
 #define PI 3.14159
 
@@ -13,16 +14,21 @@ public:
         this->game_window = SDL_CreateWindow(window_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, window_width_in, window_height_in, SDL_WINDOW_SHOWN);
         this->game_renderer = SDL_CreateRenderer(this->game_window, -1, SDL_RENDERER_ACCELERATED);
 
+        SDL_SetRenderDrawBlendMode(this->game_renderer, SDL_BLENDMODE_BLEND);
+
         this->init_player(this->player1, 250);
         this->init_player(this->player2, window_width - 250);
 
-        this->player2_x = window_width - 250;
-
         this->init_ball();
+
+        this->player2_x = window_width - 250;
+        this->player2_y = this->ball_y + this->ball.h / 2 - this->player2.h / 2;
 
         this->last_frame = SDL_GetTicks();
 
-//        this->font = TTF_OpenFont("./Asap.ttf", 12);
+        TTF_Init();
+
+        this->font = TTF_OpenFont("./Asap.ttf", 250);
     }
 
     bool running() { return is_running; }
@@ -33,6 +39,8 @@ public:
         while (SDL_PollEvent(&e))
             if (e.type == SDL_QUIT)
                 is_running = false;
+            else if (e.type == SDL_MOUSEBUTTONDOWN)
+                this->is_game_started = true;
     }
 
     void update() {
@@ -42,6 +50,11 @@ public:
 
         SDL_GetMouseState(&_, &mouseY);
 
+        int current_frame = SDL_GetTicks();
+        float dt = (current_frame - this->last_frame);
+        this->last_frame = current_frame;
+
+
         this->player1.y = mouseY - this->player1.h / 2;
 
         if (this->player1.y < 0) // clamp
@@ -49,21 +62,24 @@ public:
         else if (this->player1.y + this->player1.h > this->window_height)
             this->player1.y = this->window_height - this->player1.h;
 
-        int current_frame = SDL_GetTicks();
-        float dt = (current_frame - this->last_frame);
-        this->last_frame = current_frame;
-
-        this->ball_x += this->ball_vx * dt;
-        this->ball_y += this->ball_vy * dt;
+        if (this->is_game_started) {
+            this->ball_x += this->ball_vx * dt;
+            this->ball_y += this->ball_vy * dt;
+        }
 
         this->ball.x = (int)this->ball_x;
         this->ball.y = (int)this->ball_y;
 
         this->ball_update(dt);
 
-        const int dir = ((this->player2_y + this->player2.h / 2 > this->ball_y + this->ball.h / 2) * 2 - 1);
+        if (this->is_game_started) {
+            const int dir = ((this->player2_y + this->player2.h / 2 > this->ball_y + this->ball.h / 2) * 2 - 1);
 
-        this->player2_y -= 0.6 * dir * dt;
+            this->player2_y -= this->ai_paddle_speed * dir * dt;
+
+//            this->player2_y = this->ball_y + this->ball.h / 2 - this->player2.h / 2;
+        }
+
 
         if (player2_y < 0)
             player2_y = 0;
@@ -72,17 +88,50 @@ public:
 
         this->player2.x = player2_x;
         this->player2.y = player2_y;
+
     }
 
     void render() {
         SDL_SetRenderDrawColor(this->game_renderer, 0x00, 0x00, 0x00, 0x00);
         SDL_RenderClear(this->game_renderer);
 
+        SDL_SetRenderDrawColor(this->game_renderer, 0xFF, 0xFF, 0xFF, 0x55);
+
+        int net_spacing = 25;
+        int net_width = 10;
+
+        for (int i = 0; i < this->window_height / (net_spacing * 2) + 1; i++) {
+            SDL_Rect net{this->window_width / 2 - net_width / 2, i * net_spacing * 2, net_width, net_spacing};
+            SDL_RenderFillRect(this->game_renderer, &net);
+        }
+
         SDL_SetRenderDrawColor(this->game_renderer, 0xFF, 0xFF, 0xFF, 0xFF);
 
         SDL_RenderFillRect(this->game_renderer, &this->player1);
         SDL_RenderFillRect(this->game_renderer, &this->player2);
         SDL_RenderFillRect(this->game_renderer, &this->ball);
+
+        SDL_Color text_color = {255, 255, 255, 155 };
+
+        SDL_Surface *p1_surf = TTF_RenderText_Blended(this->font, std::to_string(this->player1_score).c_str(), text_color);
+        SDL_Texture *p1_tex = SDL_CreateTextureFromSurface(this->game_renderer, p1_surf);
+
+        SDL_Rect p1_rect{ this->window_width / 4 - 50, 50, 85, 150 };
+
+        SDL_Surface *p2_surf = TTF_RenderText_Blended(this->font, std::to_string(this->player2_score).c_str(), text_color);
+        SDL_Texture *p2_tex = SDL_CreateTextureFromSurface(this->game_renderer, p2_surf);
+
+        SDL_Rect p2_rect{ (this->window_width - this->window_width / 4) - 50, 50, 85, 150 };
+
+
+        SDL_RenderCopy(this->game_renderer, p1_tex, nullptr, &p1_rect);
+        SDL_RenderCopy(this->game_renderer, p2_tex, nullptr, &p2_rect);
+
+        SDL_FreeSurface(p1_surf);
+        SDL_FreeSurface(p2_surf);
+
+        SDL_DestroyTexture(p1_tex);
+        SDL_DestroyTexture(p2_tex);
 
         SDL_RenderPresent(this->game_renderer);
 
@@ -107,22 +156,26 @@ private:
         this->ball.w = 15;
         this->ball.h = 15;
 
-        this->ball_x = (this->window_width / 2) - this->ball.w;
-        this->ball_y = (this->window_height / 2) - this->ball.h;
+        this->ball_x = (this->window_width / 2) - this->ball.w / 2;
+        this->ball_y = (this->window_height / 2) - this->ball.h / 2;
 
-        this->ball_vx = ball_speed + ((double) rand() / (RAND_MAX)) * 0.2 - 0.1;
-        this->ball_vy = ball_speed + ((double) rand() / (RAND_MAX)) * 0.2 - 0.1;
+        this->ball_vx = ball_speed + ((double) rand() / (RAND_MAX)) * 0.4 - 0.2;
+        this->ball_vy = ball_speed + ((double) rand() / (RAND_MAX)) * 0.4 - 0.2;
     }
 
     void ball_update(float dt) {
         if (this->ball_x < 0) {
-            this->ball_x = 1;
-            this->ball_vx = fabsf(this->ball_vx);
-            this->ball_vx += ball_speedup * dt * (this->ball_vx / fabsf(this->ball_vx)); // speed up
+            init_ball();
+
+            this->is_game_started = false;
+
+            this->player2_score++;
         } else if (this->ball_x + this->ball.w > this->window_width) {
-            this->ball_x = this->window_width - this->ball.w - 1;
-            this->ball_vx = fabsf(this->ball_vx) * -1;
-            this->ball_vx += ball_speedup * dt * (this->ball_vx / fabsf(this->ball_vx)); // speed up
+            init_ball();
+
+            this->is_game_started = false;
+
+            this->player1_score++;
         }
 
         if (this->ball_y < 0) {
@@ -194,13 +247,18 @@ private:
     SDL_Window *game_window;
     SDL_Renderer *game_renderer;
 
-//    TTF_Font *font;
+    bool is_game_started = false;
+
+    TTF_Font *font;
 
     SDL_Rect player1;
     SDL_Rect player2;
 
     float player2_x;
     float player2_y;
+
+    int player1_score = 0;
+    int player2_score = 0;
 
     SDL_Rect ball;
 
@@ -213,6 +271,8 @@ private:
     const int pong_width = 20;
     const int pong_height = 100;
 
-    const float ball_speed = 0.75;
-    const float ball_speedup = 0.0075;
+    const float ball_speed = 0.7;
+    const float ball_speedup = 0.01;
+
+    const float ai_paddle_speed = 0.75;
 };
